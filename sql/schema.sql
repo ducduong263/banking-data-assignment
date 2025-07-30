@@ -1,7 +1,7 @@
 CREATE TYPE enum_status_customer AS ENUM ('active', 'inactive', 'suspended');
 CREATE TYPE enum_account_type AS ENUM ('payment', 'savings'); -- NEW: For consistency
 CREATE TYPE enum_status_account AS ENUM ('active', 'inactive', 'closed', 'frozen');
-CREATE TYPE enum_card_status AS ENUM ('active', 'inactive', 'lost', 'blocked', 'expired'); -- NEW: Correct type for card status
+CREATE TYPE enum_card_status AS ENUM ('active', 'inactive', 'lost', 'blocked', 'expired');
 CREATE TYPE enum_document_type AS ENUM ('CCCD', 'Passport');
 CREATE TYPE enum_biometric_type AS ENUM ('face', 'voice');
 CREATE TYPE enum_limit_type AS ENUM ('PER_TRANSACTION', 'DAILY_TOTAL');
