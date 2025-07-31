@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import hashlib
 import uuid
 
-# --- 1. THIẾT LẬP KẾT NỐI VÀ CÁC HẰNG SỐ ---
 CONN_PARAMS = {
     "host": "localhost",
     "port": "5432",
@@ -22,11 +21,9 @@ fake = Faker('vi_VN')
 used_account_numbers = set()
 
 def get_db_connection():
-    """Tạo và trả về một kết nối CSDL."""
     return psycopg2.connect(**CONN_PARAMS)
 
 def clear_all_tables(conn):
-    """Xóa toàn bộ dữ liệu từ các bảng để bắt đầu lại."""
     with conn.cursor() as cur:
         print("Clearing all existing data from tables...")
         cur.execute("""
@@ -43,9 +40,10 @@ def generate_customers(cur, count):
     customers_data = []
     for _ in range(count):
         full_name = fake.name()
-        for prefix in ['Bác ', 'Anh ', 'Chị ','Cô','Bà','Ông']:
+        for prefix in ['Anh ', 'Chị ', 'Cô ', 'Bác ', 'Ông ', 'Bà ']:
             if full_name.startswith(prefix):
                 full_name = full_name[len(prefix):]
+        full_name = full_name.strip()
 
         dob = fake.date_of_birth(minimum_age=18, maximum_age=70)
         password = fake.password(length=12)
@@ -53,12 +51,9 @@ def generate_customers(cur, count):
         
         status = random.choices(['active', 'inactive', 'suspended'], weights=[0.90, 0.08, 0.02])[0]
         
-        phone_number = f"+84{random.randint(100000000, 999999999)}"
-        
         customers_data.append((
             full_name, dob, random.choice(['male', 'female', 'other']),
-            fake.address(), 
-            phone_number,
+            fake.address(), f"+84{fake.unique.phone_number()[1:]}",
             fake.unique.email(), status,
             hashlib.sha256(password.encode()).hexdigest(),
             hashlib.sha256(pin.encode()).hexdigest(),
@@ -74,7 +69,6 @@ def generate_customers(cur, count):
     customers_info = cur.fetchall()
     print(f"-> Generated {len(customers_info)} customers.")
     return customers_info
-
 
 def generate_devices(cur, count):
     print(f"Generating {count} devices...")
@@ -143,7 +137,6 @@ def generate_identity_documents(cur, customers_info):
         if status == 'active':
             doc_type = random.choice(['CCCD', 'Passport'])
             
-            # Cải tiến: Tạo nơi cấp phát thực tế hơn dựa trên loại giấy tờ
             if doc_type == 'CCCD':
                 doc_number = f"{random.randint(10**11, 10**12-1)}"
                 issue_place = "Cục Cảnh sát quản lý hành chính về trật tự xã hội"
@@ -173,8 +166,8 @@ def generate_biometric_data(cur, customers_info):
         if status in ('active', 'suspended'):
             bio_data.append((
                 customer_id,
-                'face', # Chỉ có loại face
-                hashlib.sha256(str(customer_id).encode()).hexdigest() # Hash giả lập
+                'face',
+                hashlib.sha256(str(customer_id).encode()).hexdigest()
             ))
     
     insert_query = "INSERT INTO BiometricData (customer_id, biometric_type, template_hash) VALUES (%s, %s, %s);"
@@ -185,18 +178,13 @@ def generate_transaction_limits(cur, customer_ids):
     print("Generating transaction limits...")
     limits_data = []
     
-    daily_limit_options = [500000000.0, 1000000000.0, 2000000000.0, 5000000000.0]
-    per_transaction_options = [100000000.0, 500000000.0, 1000000000.0]
+    daily_limit_options = [500_000_000.0, 1_000_000_000.0, 2_000_000_000.0, 5_000_000_000.0]
+    per_transaction_options = [100_000_000.0, 500_000_000.0, 1_000_000_000.0]
 
     for customer_id in customer_ids:
         daily_total = random.choice(daily_limit_options)
-
         valid_per_transaction_options = [p for p in per_transaction_options if p <= daily_total]
-        
-        if not valid_per_transaction_options:
-            per_transaction = min(per_transaction_options)
-        else:
-            per_transaction = random.choice(valid_per_transaction_options)
+        per_transaction = random.choice(valid_per_transaction_options) if valid_per_transaction_options else min(per_transaction_options)
 
         limits_data.append((customer_id, 'DAILY_TOTAL', daily_total, 'VND'))
         limits_data.append((customer_id, 'PER_TRANSACTION', per_transaction, 'VND'))
@@ -206,7 +194,6 @@ def generate_transaction_limits(cur, customer_ids):
     print(f"-> Generated {len(limits_data)} transaction limit records.")
 
 def generate_accounts(cur, customers_info):
-    """Sửa đổi: Chỉ những customer đã active mới có account."""
     print("Generating accounts for active customers...")
     accounts_data = []
     used_account_numbers.clear()
@@ -249,7 +236,6 @@ def generate_accounts(cur, customers_info):
     return customer_accounts_map
 
 def generate_transactions(cur, customer_accounts_map, limits):
-    """Sửa đổi: Chỉ account active giao dịch, tuân thủ hạn mức và chỉ dùng device đã verified."""
     print("Generating transactions...")
     transactions_data = []
     if not customer_accounts_map:
@@ -261,26 +247,35 @@ def generate_transactions(cur, customer_accounts_map, limits):
     for customer_id, account_ids in customer_accounts_map.items():
         cur.execute("SELECT device_id FROM CustomerDeviceLinks WHERE customer_id = %s AND trust_status = 'verified';", (customer_id,))
         verified_devices = [row[0] for row in cur.fetchall()]
+        
+        cur.execute("SELECT device_id FROM CustomerDeviceLinks WHERE customer_id = %s AND trust_status = 'unverified' LIMIT 1;", (customer_id,))
+        unverified_device_row = cur.fetchone()
+        
         if not verified_devices:
             continue 
-        per_transaction_limit = limits.get(customer_id, {}).get('PER_TRANSACTION', 100000000)
+            
+        per_transaction_limit = limits.get(customer_id, {}).get('PER_TRANSACTION', 100000000.0)
         per_transaction_limit_float = float(per_transaction_limit)
 
         for account_id in account_ids:
             for _ in range(random.randint(10, 25)):
                 amount = random.uniform(50000, per_transaction_limit_float * 0.5)
-                if random.random() < 0.1: # 10% cơ hội giao dịch giá trị cao
+                if random.random() < 0.1:
                     amount = random.uniform(per_transaction_limit_float * 0.5, per_transaction_limit_float)
 
                 status = random.choices(['completed', 'pending', 'failed'], weights=[0.9, 0.05, 0.05])[0]
                 regulation_category = 'B' if amount <= 10000000 else 'C'
                 
-                is_external_transfer = random.random() < 0.2 
-                destination_account = None if is_external_transfer else random.choice(all_active_account_ids)
+                device_to_use = random.choice(verified_devices)
+                if unverified_device_row and random.random() < 0.02: # 2% cơ hội
+                    device_to_use = unverified_device_row[0]
+                    status = random.choices(['completed', 'failed'], weights=[0.4, 0.6])[0] 
+
+                destination_account = random.choice(all_active_account_ids) if random.random() > 0.2 else None
 
                 transactions_data.append((
                     account_id, destination_account,
-                    random.choice(verified_devices),
+                    device_to_use,
                     random.choices(['P2P_TRANSFER', 'BILL_PAYMENT'], weights=[0.8, 0.2])[0],
                     amount, status, regulation_category,
                     fake.date_time_between(start_date='-30d', end_date='now')
@@ -303,14 +298,30 @@ def generate_auth_logs(cur):
     transactions_info = cur.fetchall()
     
     auth_logs_data = []
+    
+    multi_fail_candidates = [t for t in transactions_info if t[3] == 'completed']
+    num_multi_fail_scenarios = int(len(multi_fail_candidates) * 0.05)
+    multi_fail_txns = random.sample(multi_fail_candidates, num_multi_fail_scenarios)
+    
+    multi_fail_txn_ids = {t[0] for t in multi_fail_txns}
+
     for txn_id, customer_id, device_id, status, reg_cat, created_at in transactions_info:
         auth_method = 'biometric' if reg_cat in ('C', 'D') else random.choice(['pin', 'otp'])
+        
         result = 'success' if status == 'completed' else 'failure'
         auth_logs_data.append((
             customer_id, device_id, txn_id,
             auth_method, result,
             created_at + timedelta(seconds=random.randint(1,5))
         ))
+
+        if txn_id in multi_fail_txn_ids:
+            for i in range(random.randint(2,3)):
+                auth_logs_data.append((
+                    customer_id, device_id, txn_id,
+                    auth_method, 'failure',
+                    created_at - timedelta(seconds=(i+1)*10)
+                ))
 
     insert_query = """
         INSERT INTO AuthLogs (customer_id, device_id, transaction_id, auth_method, result, created_at)
@@ -327,7 +338,6 @@ def generate_daily_limit_trackers(cur):
             t.amount, 
             t.regulation_category, 
             t.created_at::date as tracking_date,
-            -- Map transaction_type sang transaction_type_group
             CASE 
                 WHEN t.transaction_type = 'P2P_TRANSFER' THEN 'NHOM_I.3'
                 WHEN t.transaction_type = 'BILL_PAYMENT' THEN 'NHOM_I.2'
@@ -340,7 +350,7 @@ def generate_daily_limit_trackers(cur):
     """)
     transactions = cur.fetchall()
 
-    trackers = {} # key: (customer_id, date, group), value: {'T': amount, 'Tksth': amount}
+    trackers = {}
     for customer_id, amount, reg_cat, date, group in transactions:
         key = (customer_id, date, group)
         if key not in trackers:
@@ -365,31 +375,80 @@ def generate_daily_limit_trackers(cur):
     cur.executemany(insert_query, trackers_data)
     print(f"-> Generated {len(trackers_data)} daily limit tracker records.")
 
+def generate_risk_tags(cur):
+    print("Generating risk tags based on risky scenarios...")
+    risk_tags_data = []
+
+    # Giao dịch từ thiết bị chưa xác thực (cả thành công và thất bại)
+    cur.execute("""
+        SELECT t.transaction_id, a.customer_id
+        FROM Transactions t
+        JOIN Accounts a ON t.source_account_id = a.account_id
+        JOIN CustomerDeviceLinks cdl ON t.device_id = cdl.device_id AND a.customer_id = cdl.customer_id
+        WHERE cdl.trust_status = 'unverified';
+    """)
+    for txn_id, customer_id in cur.fetchall():
+        risk_tags_data.append((customer_id, txn_id, 'UNVERIFIED_DEVICE', None))
+
+    # Xác thực thất bại 3 lần trở lên
+    cur.execute("""
+        SELECT customer_id, transaction_id 
+        FROM AuthLogs 
+        WHERE result = 'failure'
+        GROUP BY customer_id, transaction_id
+        HAVING COUNT(*) >= 3;
+    """)
+    for customer_id, txn_id in cur.fetchall():
+        risk_tags_data.append((customer_id, txn_id, 'MULTIPLE_FAILED_AUTHENTICATIONS', None))
+
+    # Giao dịch vào giờ bất thường (0h - 5h sáng)
+    cur.execute("""
+        SELECT t.transaction_id, a.customer_id
+        FROM Transactions t
+        JOIN Accounts a ON t.source_account_id = a.account_id
+        WHERE EXTRACT(HOUR FROM t.created_at) BETWEEN 0 AND 5;
+    """)
+    for txn_id, customer_id in cur.fetchall():
+        risk_tags_data.append((customer_id, txn_id, 'UNUSUAL_TRANSACTION_TIME', None))
+        
+    # Giao dịch thành công từ thiết bị mới (chưa xác thực)
+    cur.execute("""
+        SELECT t.transaction_id, a.customer_id
+        FROM Transactions t
+        JOIN Accounts a ON t.source_account_id = a.account_id
+        JOIN CustomerDeviceLinks cdl ON t.device_id = cdl.device_id AND a.customer_id = cdl.customer_id
+        WHERE cdl.trust_status = 'unverified' AND t.status = 'completed';
+    """)
+    for txn_id, customer_id in cur.fetchall():
+        risk_tags_data.append((customer_id, txn_id, 'NEW_DEVICE_SUCCESSFUL_TRANSACTION', None))
+
+    insert_query = """
+        INSERT INTO RiskTags (customer_id, transaction_id, tag_type, description)
+        VALUES (%s, %s, %s, %s);
+    """
+    cur.executemany(insert_query, risk_tags_data)
+    print(f"-> Generated {len(risk_tags_data)} risk tags.")
+
 
 def main():
-    """Hàm chính để chạy toàn bộ quá trình sinh dữ liệu."""
     conn = None
     try:
         conn = get_db_connection()
         clear_all_tables(conn)
 
         with conn.cursor() as cur:
-            # Sinh các thực thể chính
             customers_info = generate_customers(cur, NUM_CUSTOMERS)
-            customer_ids = [info[0] for info in customers_info]
             device_ids = generate_devices(cur, NUM_DEVICES)
             conn.commit()
 
-            # Sinh các bảng phụ thuộc
+            customer_ids = [info[0] for info in customers_info]
             generate_identity_documents(cur, customers_info)
             generate_biometric_data(cur, customers_info)
             generate_transaction_limits(cur, customer_ids)
             generate_customer_device_links(cur, customer_ids, device_ids)
-            # Sửa đổi: Truyền customers_info để lọc khách hàng active
             customer_accounts_map = generate_accounts(cur, customers_info)
             conn.commit() 
             
-            # Đọc lại hạn mức để dùng cho việc tạo giao dịch
             cur.execute("SELECT customer_id, limit_type, limit_amount FROM TransactionLimits;")
             limits = {}
             for cid, ltype, lamount in cur.fetchall():
@@ -397,13 +456,12 @@ def main():
                     limits[cid] = {}
                 limits[cid][ltype] = lamount
 
-            # Sinh giao dịch
             generate_transactions(cur, customer_accounts_map, limits)
             conn.commit()
             
-            # Sinh dữ liệu dựa trên lịch sử giao dịch
             generate_auth_logs(cur)
             generate_daily_limit_trackers(cur)
+            generate_risk_tags(cur)
             
             conn.commit()
             print("\n🎉 Sample data generated successfully!")
