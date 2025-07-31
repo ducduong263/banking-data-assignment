@@ -260,14 +260,26 @@ def generate_transactions(cur, customer_accounts_map, limits):
         for account_id in account_ids:
             for _ in range(random.randint(10, 25)):
                 amount = random.uniform(50000, per_transaction_limit_float * 0.5)
-                if random.random() < 0.1:
-                    amount = random.uniform(per_transaction_limit_float * 0.5, per_transaction_limit_float)
+                
+                # SỬA ĐỔI: Thêm logic để tạo giao dịch loại D
+                rand_choice = random.random()
+                if rand_choice < 0.02: # 2% cơ hội là giao dịch loại D
+                    amount = random.uniform(1_500_000_001, 2_000_000_000)
+                elif rand_choice < 0.1: # 8% tiếp theo là giao dịch loại C
+                    amount = random.uniform(10_000_001, 1_500_000_000)
 
                 status = random.choices(['completed', 'pending', 'failed'], weights=[0.9, 0.05, 0.05])[0]
-                regulation_category = 'B' if amount <= 10000000 else 'C'
+                
+                # Phân loại lại dựa trên giá trị
+                if amount > 1_500_000_000:
+                    regulation_category = 'D'
+                elif amount > 10_000_000:
+                    regulation_category = 'C'
+                else:
+                    regulation_category = 'B'
                 
                 device_to_use = random.choice(verified_devices)
-                if unverified_device_row and random.random() < 0.02: # 2% cơ hội
+                if unverified_device_row and random.random() < 0.02:
                     device_to_use = unverified_device_row[0]
                     status = random.choices(['completed', 'failed'], weights=[0.4, 0.6])[0] 
 
@@ -299,29 +311,19 @@ def generate_auth_logs(cur):
     
     auth_logs_data = []
     
-    multi_fail_candidates = [t for t in transactions_info if t[3] == 'completed']
-    num_multi_fail_scenarios = int(len(multi_fail_candidates) * 0.05)
-    multi_fail_txns = random.sample(multi_fail_candidates, num_multi_fail_scenarios)
-    
-    multi_fail_txn_ids = {t[0] for t in multi_fail_txns}
-
     for txn_id, customer_id, device_id, status, reg_cat, created_at in transactions_info:
-        auth_method = 'biometric' if reg_cat in ('C', 'D') else random.choice(['pin', 'otp'])
-        
         result = 'success' if status == 'completed' else 'failure'
-        auth_logs_data.append((
-            customer_id, device_id, txn_id,
-            auth_method, result,
-            created_at + timedelta(seconds=random.randint(1,5))
-        ))
-
-        if txn_id in multi_fail_txn_ids:
-            for i in range(random.randint(2,3)):
-                auth_logs_data.append((
-                    customer_id, device_id, txn_id,
-                    auth_method, 'failure',
-                    created_at - timedelta(seconds=(i+1)*10)
-                ))
+        
+        if reg_cat in ('A', 'B'):
+            auth_method = random.choice(['sms_otp', 'device_biometric'])
+            auth_logs_data.append((customer_id, device_id, txn_id, auth_method, result, created_at + timedelta(seconds=2)))
+        elif reg_cat == 'C':
+            auth_method = 'biometric_faceid'
+            auth_logs_data.append((customer_id, device_id, txn_id, auth_method, result, created_at + timedelta(seconds=2)))
+        elif reg_cat == 'D':
+            # Tạo 2 log cho giao dịch loại D
+            auth_logs_data.append((customer_id, device_id, txn_id, 'biometric_faceid', result, created_at + timedelta(seconds=2)))
+            auth_logs_data.append((customer_id, device_id, txn_id, 'soft_otp', result, created_at + timedelta(seconds=4)))
 
     insert_query = """
         INSERT INTO AuthLogs (customer_id, device_id, transaction_id, auth_method, result, created_at)
@@ -379,7 +381,7 @@ def generate_risk_tags(cur):
     print("Generating risk tags based on risky scenarios...")
     risk_tags_data = []
 
-    # Giao dịch từ thiết bị chưa xác thực (cả thành công và thất bại)
+    # Giao dịch từ thiết bị chưa xác thực
     cur.execute("""
         SELECT t.transaction_id, a.customer_id
         FROM Transactions t
@@ -410,7 +412,7 @@ def generate_risk_tags(cur):
     """)
     for txn_id, customer_id in cur.fetchall():
         risk_tags_data.append((customer_id, txn_id, 'UNUSUAL_TRANSACTION_TIME', None))
-        
+
     # Giao dịch thành công từ thiết bị mới (chưa xác thực)
     cur.execute("""
         SELECT t.transaction_id, a.customer_id
