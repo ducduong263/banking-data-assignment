@@ -17,15 +17,15 @@ from data_quality_standards import (
 )
 
 CONN_PARAMS = {
-    "host": "localhost",
-    "port": "5432",
-    "dbname": "banking_db",
-    "user": "db_user",
-    "password": "db_password"
+    "host": os.getenv("BANKING_DB_HOST", "localhost"),
+    "port": os.getenv("BANKING_DB_PORT", "5432"),
+    "dbname": os.getenv("BANKING_DB_NAME", "banking_db"),
+    "user": os.getenv("BANKING_DB_USER", "db_user"),
+    "password": os.getenv("BANKING_DB_PASSWORD", "db_password")
 }
 
 def write_log_file(results: List[Dict[str, Any]]):
-    log_dir = "logs"
+    log_dir = "/opt/airflow/logs" 
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file_path = os.path.join(log_dir, f"audit_log_{timestamp}.txt")
@@ -160,7 +160,7 @@ def main():
             all_results.append(result)
 
     except psycopg2.Error as e:
-        print(f"\n❌ DATABASE ERROR: {e}")
+        print(f"\n DATABASE ERROR: {e}")
     finally:
         if conn:
             conn.close()

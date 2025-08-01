@@ -4,13 +4,14 @@ import random
 from datetime import datetime, timedelta
 import hashlib
 import uuid
+import os
 
 CONN_PARAMS = {
-    "host": "localhost",
-    "port": "5432",
-    "dbname": "banking_db",
-    "user": "db_user",
-    "password": "db_password"
+    "host": os.getenv("BANKING_DB_HOST", "localhost"),
+    "port": os.getenv("BANKING_DB_PORT", "5432"),
+    "dbname": os.getenv("BANKING_DB_NAME", "banking_db"),
+    "user": os.getenv("BANKING_DB_USER", "db_user"),
+    "password": os.getenv("BANKING_DB_PASSWORD", "db_password")
 }
 
 NUM_CUSTOMERS = 200
@@ -115,13 +116,15 @@ def generate_customer_device_links(cur, customer_ids, device_ids):
     print("Generating customer-device links...")
     links_data = []
     for customer_id in customer_ids:
-        num_devices_for_customer = random.randint(1, 3)
+        num_devices_for_customer = random.randint(1, 2)
         assigned_devices = random.sample(device_ids, num_devices_for_customer)
         
+        # Thiết bị đầu tiên luôn là 'verified' và là session đang hoạt động
         links_data.append((customer_id, assigned_devices[0], 'verified', True))
         
         for i in range(1, len(assigned_devices)):
-            links_data.append((customer_id, assigned_devices[i], 'unverified', False))
+            status = random.choices(['verified', 'unverified'], weights=[0.8, 0.2])[0]
+            links_data.append((customer_id, assigned_devices[i], status, False))
 
     insert_query = """
         INSERT INTO CustomerDeviceLinks (customer_id, device_id, trust_status, is_active_session)
@@ -261,16 +264,14 @@ def generate_transactions(cur, customer_accounts_map, limits):
             for _ in range(random.randint(10, 25)):
                 amount = random.uniform(50000, per_transaction_limit_float * 0.5)
                 
-                # SỬA ĐỔI: Thêm logic để tạo giao dịch loại D
                 rand_choice = random.random()
-                if rand_choice < 0.02: # 2% cơ hội là giao dịch loại D
+                if rand_choice < 0.02:
                     amount = random.uniform(1_500_000_001, 2_000_000_000)
-                elif rand_choice < 0.1: # 8% tiếp theo là giao dịch loại C
+                elif rand_choice < 0.1: 
                     amount = random.uniform(10_000_001, 1_500_000_000)
 
                 status = random.choices(['completed', 'pending', 'failed'], weights=[0.9, 0.05, 0.05])[0]
                 
-                # Phân loại lại dựa trên giá trị
                 if amount > 1_500_000_000:
                     regulation_category = 'D'
                 elif amount > 10_000_000:
@@ -321,7 +322,6 @@ def generate_auth_logs(cur):
             auth_method = 'biometric_faceid'
             auth_logs_data.append((customer_id, device_id, txn_id, auth_method, result, created_at + timedelta(seconds=2)))
         elif reg_cat == 'D':
-            # Tạo 2 log cho giao dịch loại D
             auth_logs_data.append((customer_id, device_id, txn_id, 'biometric_faceid', result, created_at + timedelta(seconds=2)))
             auth_logs_data.append((customer_id, device_id, txn_id, 'soft_otp', result, created_at + timedelta(seconds=4)))
 
@@ -466,11 +466,11 @@ def main():
             generate_risk_tags(cur)
             
             conn.commit()
-            print("\n🎉 Sample data generated successfully!")
+            print("\n Sample data generated successfully!")
 
     except psycopg2.Error as e:
         if conn: conn.rollback()
-        print(f"\n❌ Database error: {e}")
+        print(f"\n Database error: {e}")
     finally:
         if conn: conn.close()
         print("Database connection closed.")
